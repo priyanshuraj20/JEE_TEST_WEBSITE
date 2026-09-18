@@ -43,27 +43,63 @@ export default function TestDetailPage() {
   const router = useRouter();
   const [data, setData] = useState<{ test: Test; attempts: Attempt[]; questions: Question[] } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState("");
   const [selectedAttempt, setSelectedAttempt] = useState<Attempt | null>(null);
 
   async function loadData() {
-    const res = await fetch(`/api/admin/tests/${id}`);
-    if (res.ok) setData(await res.json());
-    setLoading(false);
+    try {
+      const res = await fetch(`/api/admin/tests/${id}`);
+      if (res.ok) setData(await res.json());
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { loadData(); }, [id]);
 
-  async function publishResults() {
-    if (!confirm("Publish results? Students will see their scores.")) return;
+  async function copyShareLink(link: string) {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(link);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = link;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Copy failed:", err);
+    }
+  }
+
+  async function togglePublishResults(publish: boolean) {
     setPublishing(true);
-    const res = await fetch(`/api/admin/tests/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ results_published: true }),
-    });
-    if (res.ok) loadData();
-    setPublishing(false);
+    setPublishError("");
+    try {
+      const res = await fetch(`/api/admin/tests/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ results_published: publish }),
+      });
+      if (res.ok) {
+        await loadData();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setPublishError(err.error || "Failed to update results status");
+      }
+    } catch (e: any) {
+      setPublishError(e.message || "Network error");
+    } finally {
+      setPublishing(false);
+    }
   }
 
   if (loading) return <div className="min-h-screen bg-gray-50"><AdminNav /><p className="text-center py-20 text-gray-500">Loading…</p></div>;
@@ -81,37 +117,68 @@ export default function TestDetailPage() {
           <div>
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold text-gray-900">{test.title}</h1>
-              <span className="bg-blue-100 text-blue-700 font-mono font-bold text-sm px-2 py-0.5 rounded">
-                {test.test_code}
+              <span className="bg-blue-100 text-blue-700 font-mono font-bold text-sm px-2.5 py-0.5 rounded">
+                Code: {test.test_code}
               </span>
-              {test.results_published && (
-                <span className="bg-green-100 text-green-700 text-sm font-medium px-2 py-0.5 rounded">
+              {test.results_published ? (
+                <span className="bg-green-100 text-green-700 border border-green-200 text-xs font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
                   Results Published
+                </span>
+              ) : (
+                <span className="bg-gray-100 text-gray-600 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                  Results Hidden
                 </span>
               )}
             </div>
             <p className="text-sm text-gray-500 mt-2">
-              {test.duration_minutes} min · {questions.length} questions · {attempts.length} students
+              {test.duration_minutes} min · {questions.length} questions · {attempts.length} student{attempts.length === 1 ? "" : "s"}
             </p>
-            <div className="mt-2 flex items-center gap-2">
-              <span className="text-xs text-gray-500 font-mono bg-gray-100 px-2 py-1 rounded">{shareLink}</span>
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-gray-600 font-mono bg-white border border-gray-200 px-3 py-1.5 rounded-lg select-all">
+                {shareLink}
+              </span>
               <button
-                onClick={() => { navigator.clipboard.writeText(shareLink); alert("Copied!"); }}
-                className="text-xs text-blue-600 hover:underline"
+                onClick={() => copyShareLink(shareLink)}
+                id="copy-link-btn"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-all shadow-sm active:scale-95"
               >
-                Copy
+                {copied ? (
+                  <>
+                    <span>✓</span>
+                    <span>Copied to Clipboard!</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <span>Copy Link</span>
+                  </>
+                )}
               </button>
             </div>
+            {publishError && (
+              <p className="text-xs text-red-600 mt-2">⚠️ {publishError}</p>
+            )}
           </div>
-          <div className="flex gap-2">
-            {!test.results_published && (
+          <div className="flex gap-2 shrink-0">
+            {!test.results_published ? (
               <button
-                onClick={publishResults}
+                onClick={() => togglePublishResults(true)}
                 disabled={publishing}
                 id="publish-btn"
-                className="btn-success"
+                className="btn-success flex items-center gap-1.5"
               >
                 {publishing ? "Publishing…" : "Publish Results"}
+              </button>
+            ) : (
+              <button
+                onClick={() => togglePublishResults(false)}
+                disabled={publishing}
+                className="btn-secondary text-xs text-gray-600"
+              >
+                {publishing ? "Updating…" : "Hide Results"}
               </button>
             )}
             <Link href="/admin/dashboard" className="btn-secondary">← Dashboard</Link>
